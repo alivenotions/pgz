@@ -1,0 +1,9 @@
+rocksdb
+.zig-cache
+zig-out
+*~
+*.o
+*.dylib
+main
+kv
+data
