@@ -112,10 +112,10 @@ fn eatWhitespace(source: String, index: usize) usize {
     }
 
     var res = index;
-    while (source[res] == ' ' or
+    while (res < source.len and (source[res] == ' ' or
         source[res] == '\n' or
         source[res] == '\t' or
-        source[res] == '\r')
+        source[res] == '\r'))
     {
         res += 1;
         if (res == source.len) {
@@ -174,6 +174,132 @@ fn lexKeyword(source: String, index: usize) struct { nextPosition: usize, token:
             .kind = kind,
         },
     };
+}
+
+fn lexInteger(source: String, index: usize) struct { nextPosition: usize, token: ?Token } {
+    const start = index;
+    var end = index;
+    var i = index;
+    while (i < source.len and source[i] >= '0' and source[i] <= '9') : (i += 1) {
+        end = end + 1;
+    }
+
+    if (start == end) {
+        return .{ .nextPosition = 0, .token = null };
+    }
+
+    return .{
+        .nextPosition = end,
+        .token = Token{
+            .source = source,
+            .start = start,
+            .end = end,
+            .kind = Token.Kind.integer,
+        },
+    };
+}
+
+fn lexString(source: String, index: usize) struct { nextPosition: usize, token: ?Token } {
+    var i = index;
+    if (source[i] != '\'') {
+        return .{ .nextPosition = 0, .token = null };
+    }
+    i = i + 1;
+    const start = i;
+    var end = i;
+
+    while (i < source.len and source[i] != '\'') : (i += 1) {
+        end = end + 1;
+    }
+
+    if (source[i] == '\'') {
+        i = i + 1;
+    }
+
+    if (start == end) {
+        return .{ .nextPosition = 0, .token = null };
+    }
+
+    return .{
+        .nextPosition = i,
+        .token = Token{
+            .source = source,
+            .start = start,
+            .end = end,
+            .kind = Token.Kind.string,
+        },
+    };
+}
+
+fn lexIdentifier(source: String, index: usize) struct { nextPosition: usize, token: ?Token } {
+    const start = index;
+    var end = index;
+    var i = index;
+    while (i < source.len and ((source[i] >= 'a' and source[i] <= 'z') or
+        (source[i] >= 'A' and source[i] <= 'Z') or
+        (source[i] == '*'))) : (i += 1)
+    {
+        end = end + 1;
+    }
+
+    if (start == end) {
+        return .{ .nextPosition = 0, .token = null };
+    }
+
+    return .{
+        .nextPosition = end,
+        .token = Token{
+            .source = source,
+            .start = start,
+            .end = end,
+            .kind = Token.Kind.identifier,
+        },
+    };
+}
+
+pub fn lex(source: String, tokens: *std.ArrayList(Token)) ?Error {
+    var i: usize = 0;
+    while (true) {
+        i = eatWhitespace(source, i);
+        if (i >= source.len) {
+            break;
+        }
+
+        const keywordRes = lexKeyword(source, i);
+        if (keywordRes.token) |token| {
+            tokens.append(token) catch return "Failed to allocate space for keyword token";
+            i = keywordRes.nextPosition;
+            continue;
+        }
+
+        const integerRes = lexInteger(source, i);
+        if (integerRes.token) |token| {
+            tokens.append(token) catch return "Failed to allocate space for integer token";
+            i = integerRes.nextPosition;
+            continue;
+        }
+
+        const stringRes = lexString(source, i);
+        if (stringRes.token) |token| {
+            tokens.append(token) catch return "Failed to allocate space for string token";
+            i = stringRes.nextPosition;
+            continue;
+        }
+
+        const identifierRes = lexIdentifier(source, i);
+        if (identifierRes.token) |token| {
+            tokens.append(token) catch return "Failed to allocate space for identifier token";
+            i = identifierRes.nextPosition;
+            continue;
+        }
+
+        if (tokens.items.len > 0) {
+            debug(tokens.items, tokens.items.len - 1, "Last good token.\n");
+        }
+        return "Bad token";
+    }
+
+    return null;
 }
 
 test "eatWhitespace" {
@@ -245,7 +371,141 @@ test "lexKeyword" {
         if (tc.expectedToken) |expected| {
             try expectEqual(expected, result.token.?.kind);
         } else {
-            try std.testing.expectEqual(@as(?Token, null), result.token);
+            try expectEqual(@as(?Token, null), result.token);
+        }
+    }
+}
+
+test "lexInteger" {
+    const testCases = [_]struct {
+        source: []const u8,
+        index: usize,
+        expectedNextPosition: usize,
+        expectedToken: ?Token.Kind,
+        expectedStart: usize,
+        expectedEnd: usize,
+    }{
+        .{ .source = "123", .index = 0, .expectedNextPosition = 3, .expectedToken = .integer, .expectedStart = 0, .expectedEnd = 3 },
+        .{ .source = "456 abc", .index = 0, .expectedNextPosition = 3, .expectedToken = .integer, .expectedStart = 0, .expectedEnd = 3 },
+        .{ .source = "abc 789", .index = 0, .expectedNextPosition = 0, .expectedToken = null, .expectedStart = 0, .expectedEnd = 0 },
+        .{ .source = "abc 789", .index = 4, .expectedNextPosition = 7, .expectedToken = .integer, .expectedStart = 4, .expectedEnd = 7 },
+        .{ .source = "42abc", .index = 0, .expectedNextPosition = 2, .expectedToken = .integer, .expectedStart = 0, .expectedEnd = 2 },
+        .{ .source = "0", .index = 0, .expectedNextPosition = 1, .expectedToken = .integer, .expectedStart = 0, .expectedEnd = 1 },
+        .{ .source = "", .index = 0, .expectedNextPosition = 0, .expectedToken = null, .expectedStart = 0, .expectedEnd = 0 },
+    };
+
+    for (testCases) |tc| {
+        const result = lexInteger(tc.source, tc.index);
+        try expectEqual(tc.expectedNextPosition, result.nextPosition);
+        if (tc.expectedToken) |expected| {
+            try expectEqual(expected, result.token.?.kind);
+            try expectEqual(tc.expectedStart, result.token.?.start);
+            try expectEqual(tc.expectedEnd, result.token.?.end);
+        } else {
+            try expectEqual(@as(?Token, null), result.token);
+        }
+    }
+}
+
+test "lexString" {
+    const testCases = [_]struct {
+        source: []const u8,
+        index: usize,
+        expectedNextPosition: usize,
+        expectedToken: ?Token.Kind,
+        expectedStart: usize,
+        expectedEnd: usize,
+    }{
+        .{ .source = "'hello'", .index = 0, .expectedNextPosition = 7, .expectedToken = .string, .expectedStart = 1, .expectedEnd = 6 },
+        .{ .source = "'hello world'", .index = 0, .expectedNextPosition = 13, .expectedToken = .string, .expectedStart = 1, .expectedEnd = 12 },
+        .{ .source = "abc 'hello'", .index = 4, .expectedNextPosition = 11, .expectedToken = .string, .expectedStart = 5, .expectedEnd = 10 },
+        .{ .source = "abc 'hello' def", .index = 4, .expectedNextPosition = 11, .expectedToken = .string, .expectedStart = 5, .expectedEnd = 10 },
+        .{ .source = "abc 'hello' def", .index = 11, .expectedNextPosition = 0, .expectedToken = null, .expectedStart = 0, .expectedEnd = 0 },
+    };
+
+    for (testCases) |tc| {
+        const result = lexString(tc.source, tc.index);
+        try expectEqual(tc.expectedNextPosition, result.nextPosition);
+        if (tc.expectedToken) |expected| {
+            try expectEqual(expected, result.token.?.kind);
+            try expectEqual(tc.expectedStart, result.token.?.start);
+            try expectEqual(tc.expectedEnd, result.token.?.end);
+        } else {
+            try expectEqual(@as(?Token, null), result.token);
+        }
+    }
+}
+
+test "lexIdentifier" {
+    const testCases = [_]struct {
+        source: []const u8,
+        index: usize,
+        expectedNextPosition: usize,
+        expectedToken: ?Token.Kind,
+        expectedStart: usize,
+        expectedEnd: usize,
+    }{
+        .{ .source = "hello", .index = 0, .expectedNextPosition = 5, .expectedToken = .identifier, .expectedStart = 0, .expectedEnd = 5 },
+        .{ .source = "hello world", .index = 0, .expectedNextPosition = 5, .expectedToken = .identifier, .expectedStart = 0, .expectedEnd = 5 },
+        .{ .source = "abc hello", .index = 4, .expectedNextPosition = 9, .expectedToken = .identifier, .expectedStart = 4, .expectedEnd = 9 },
+        .{ .source = "abc hello def", .index = 4, .expectedNextPosition = 9, .expectedToken = .identifier, .expectedStart = 4, .expectedEnd = 9 },
+        .{ .source = "abc hello def", .index = 9, .expectedNextPosition = 0, .expectedToken = null, .expectedStart = 0, .expectedEnd = 0 },
+    };
+
+    for (testCases) |tc| {
+        const result = lexIdentifier(tc.source, tc.index);
+        try expectEqual(tc.expectedNextPosition, result.nextPosition);
+        if (tc.expectedToken) |expected| {
+            try expectEqual(expected, result.token.?.kind);
+            try expectEqual(tc.expectedStart, result.token.?.start);
+            try expectEqual(tc.expectedEnd, result.token.?.end);
+        } else {
+            try expectEqual(@as(?Token, null), result.token);
+        }
+    }
+}
+
+test "lexer" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const testCases = [_]struct {
+        source: []const u8,
+        expectedTokens: []const Token.Kind,
+        expectedError: ?Error,
+    }{
+        .{
+            .source = "SELECT * FROM table",
+            .expectedTokens = &[_]Token.Kind{ .select_keyword, .identifier, .from_keyword, .identifier },
+            .expectedError = null,
+        },
+        .{
+            .source = "SELECT * FROM table WHERE id = 1",
+            .expectedTokens = &[_]Token.Kind{ .select_keyword, .identifier, .from_keyword, .identifier, .where_keyword, .identifier, .equal_operator, .integer },
+            .expectedError = null,
+        },
+        .{
+            .source = "SELECT * FROM table WHERE id = 'abc'",
+            .expectedTokens = &[_]Token.Kind{ .select_keyword, .identifier, .from_keyword, .identifier, .where_keyword, .identifier, .equal_operator, .string },
+            .expectedError = null,
+        },
+    };
+
+    for (testCases) |tc| {
+        var tokens = std.ArrayList(Token).init(allocator);
+        defer tokens.deinit();
+
+        const err = lex(tc.source, &tokens);
+
+        if (tc.expectedError) |expected_error| {
+            try std.testing.expectEqualStrings(expected_error, err.?);
+        } else {
+            try expectEqual(@as(?Error, null), err);
+            try expectEqual(tc.expectedTokens.len, tokens.items.len);
+            for (tc.expectedTokens, tokens.items) |expected, actual| {
+                try expectEqual(expected, actual.kind);
+            }
         }
     }
 }
