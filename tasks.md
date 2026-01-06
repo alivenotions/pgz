@@ -1,882 +1,835 @@
-# SSD-First Storage Layer Implementation Tasks
+# SSD-First Storage Engine — Implementation Tasks
 
-## Phase 1: Foundation & Core Storage Primitives
+> Organized by milestones from `plan.md`. Each milestone has exit criteria that must pass before moving on.
 
-### 1.1 Project Infrastructure
-- [ ] Set up testing framework in Zig
-- [ ] Configure build system for multiple modules
-  - [ ] Cross-platform build configuration
-  - [ ] Platform-specific compilation flags
-- [ ] Add benchmark harness infrastructure
-- [ ] Set up continuous integration
-  - [ ] CI for Linux (GitHub Actions)
-  - [ ] CI for macOS (GitHub Actions)
-  - [ ] Run tests on both platforms
-- [ ] Create development documentation
-  - [ ] Platform-specific setup instructions
+---
 
-### 1.2 Core Data Structures
-- [ ] Implement Result type for error handling
-- [ ] Implement arena allocator for temporary allocations
-- [ ] Create buffer management utilities
-- [ ] Implement comparison functions for keys
-- [ ] Add serialization/deserialization helpers
+## Pre-M0: Project Setup
 
-### 1.3 MemTable Implementation
-- [ ] Design MemTable interface
-- [ ] Implement skip list data structure
-  - [ ] Skip list node structure
+### Development Environment
+- [ ] Initialize Zig project structure
+- [ ] Set up build.zig with module organization
+- [ ] Configure test runner
+- [ ] Set up CI (GitHub Actions for macOS)
+- [ ] Add formatting/linting (zig fmt)
+
+### Module Skeleton
+Create empty files with basic structure:
+- [ ] `src/types.zig` — Constants, error types, IDs
+- [ ] `src/crc32c.zig` — Checksum placeholder
+- [ ] `src/io.zig` — I/O abstraction interface
+- [ ] `src/vlog.zig` — Value log placeholder
+- [ ] `src/sstable.zig` — SSTable placeholder
+- [ ] `src/manifest.zig` — Manifest placeholder
+- [ ] `src/lsm.zig` — LSM placeholder
+- [ ] `src/txn.zig` — Transaction placeholder
+- [ ] `src/db.zig` — High-level API placeholder
+
+### Testing Infrastructure
+- [ ] Create test utilities (temp directories, cleanup)
+- [ ] Add assertion helpers for common checks
+- [ ] Set up benchmark harness (timing, throughput measurement)
+- [ ] Add fault injection framework (for crash testing later)
+
+---
+
+## M0: Storage Skeleton (macOS, Zig)
+
+**Goal:** Crash-safe append-only storage with basic CLI.
+
+### types.zig — Foundation Types
+- [ ] Define `PageSize = 4096` constant
+- [ ] Define `SegmentId`, `Offset`, `Length` types
+- [ ] Define `ValuePointer` struct: `{ segment: u32, offset: u64, len: u32 }`
+- [ ] Define error types: `StorageError`, `CorruptionError`, `IOError`
+- [ ] Define `Epoch` type for versioning
+- [ ] Add alignment helpers: `alignUp(n, alignment)`, `isAligned(n, alignment)`
+
+### crc32c.zig — Checksums
+- [ ] Implement CRC32C algorithm (Castagnoli polynomial)
+- [ ] Hardware acceleration check (use `@ctz` intrinsics if available)
+- [ ] Fallback software implementation
+- [ ] Add `crc32c(data: []const u8) -> u32`
+- [ ] Add `crc32cUpdate(crc: u32, data: []const u8) -> u32` for streaming
+- [ ] Write tests: known vectors, empty input, large input
+
+### io.zig — Platform I/O Abstraction (macOS First)
+
+#### Common Interface
+- [ ] Define `IOOp` union: `{ read, write, fsync }`
+- [ ] Define `Completion` struct: `{ op, result, userdata }`
+- [ ] Define `AsyncIO` interface:
+  ```zig
+  pub const AsyncIO = struct {
+      pub fn submit(self: *AsyncIO, op: IOOp) !void
+      pub fn poll(self: *AsyncIO, completions: []Completion) !usize
+      pub fn submitAndWait(self: *AsyncIO, op: IOOp) !void // blocking
+  };
+  ```
+
+#### macOS Backend
+- [ ] Implement file open with `F_NOCACHE` via `fcntl()`
+- [ ] Implement aligned buffer allocation (`std.heap.page_allocator`)
+- [ ] Implement synchronous `pread`/`pwrite` (first pass, simplest)
+- [ ] Implement `F_FULLFSYNC` for true durability
+- [ ] Implement `F_PREALLOCATE` for space reservation
+- [ ] Add alignment assertions (panic on unaligned I/O)
+- [ ] Write tests: basic read/write, alignment enforcement
+
+#### Fallback/Test Backend
+- [ ] Implement synchronous backend using standard file I/O
+- [ ] Add I/O tracing (log all operations for debugging)
+- [ ] Add artificial delay injection (for latency testing)
+
+### vlog.zig — Value Log (Append-Only)
+
+#### Record Format
+```
+┌──────────┬───────────┬─────────────────┬────────────────────┐
+│ len: u32 │ crc32c: u32 │ payload: bytes │ zero-pad → 4KiB  │
+└──────────┴───────────┴─────────────────┴────────────────────┘
+```
+
+#### Writer
+- [ ] Define `VLogWriter` struct
+- [ ] Implement `append(payload: []const u8) -> ValuePointer`
+  - [ ] Calculate padded size (round up to 4KiB)
+  - [ ] Write header (len, crc32c)
+  - [ ] Write payload
+  - [ ] Write zero padding
+  - [ ] Return value pointer
+- [ ] Implement `sync()` — flush to disk
+- [ ] Track current segment and offset
+- [ ] Handle segment rotation (when segment reaches max size)
+
+#### Reader
+- [ ] Define `VLogReader` struct
+- [ ] Implement `read(vptr: ValuePointer) -> []const u8`
+  - [ ] Seek to offset
+  - [ ] Read header
+  - [ ] Verify CRC32C
+  - [ ] Return payload (without padding)
+- [ ] Handle read errors (corruption, EOF)
+
+#### Recovery
+- [ ] Implement `scanLastGood(segment_path) -> last_valid_offset`
+  - [ ] Scan from beginning
+  - [ ] Validate each record (CRC check)
+  - [ ] Return offset of last valid record
+  - [ ] Truncate file to last valid offset on recovery
+- [ ] Write crash recovery tests:
+  - [ ] Partial write (truncated mid-record)
+  - [ ] Corrupted CRC
+  - [ ] Valid file
+
+#### Tests
+- [ ] Write + read round-trip
+- [ ] Multiple records
+- [ ] Large payloads (> 4KiB, spanning multiple pages)
+- [ ] Recovery from partial write
+- [ ] Recovery from corruption
+
+### sstable.zig — Single SSTable Run (No Levels Yet)
+
+#### Block Format
+```
+┌──────────────┬───────────┬────────────────────┬───────────┬────────────┐
+│ block_len: u32 │ count: u32 │ entries...       │ crc32c: u32 │ pad→4KiB │
+└──────────────┴───────────┴────────────────────┴───────────┴────────────┘
+
+Entry: [k_len: u16 | key | vptr (seg: u32, off: u64, len: u32) | epoch: u32]
+```
+
+#### Writer
+- [ ] Define `SSTableBuilder` struct
+- [ ] Implement `add(key: []const u8, vptr: ValuePointer, epoch: u32)`
+  - [ ] Accumulate entries in current block
+  - [ ] Flush block when size threshold reached (32-64 KiB)
+- [ ] Implement block flushing:
+  - [ ] Encode entries
+  - [ ] Calculate CRC32C
+  - [ ] Pad to 4KiB alignment
+  - [ ] Write to file
+  - [ ] Record (first_key, file_offset) in fence index
+- [ ] Implement `finish() -> SSTableMetadata`
+  - [ ] Flush final block
+  - [ ] Write fence index page
+  - [ ] Write footer with metadata
+- [ ] Write tests: empty table, single entry, many entries
+
+#### Fence Index
+```
+┌─────────────────────────────────────────────────┬───────────┐
+│ sorted array of (first_key_of_block, file_off) │ crc32c    │
+└─────────────────────────────────────────────────┴───────────┘
+```
+- [ ] Implement fence index encoding
+- [ ] Implement fence index decoding
+- [ ] Implement binary search on fence index
+
+#### Reader
+- [ ] Define `SSTableReader` struct
+- [ ] Implement `open(path) -> SSTableReader`
+  - [ ] Read footer
+  - [ ] Read and parse fence index
+  - [ ] Cache fence index in memory
+- [ ] Implement `get(key: []const u8) -> ?ValuePointer`
+  - [ ] Binary search fence index to find block
+  - [ ] Read block
+  - [ ] Verify CRC
+  - [ ] Linear search within block
+  - [ ] Return vptr if found
+- [ ] Implement `iterator() -> SSTableIterator`
+- [ ] Write tests: point lookup, iteration, not found
+
+### manifest.zig — Superblock & Manifest
+
+#### Superblock Format (two copies for atomicity)
+- [ ] Define superblock structure:
+  - [ ] Magic number
+  - [ ] Version
+  - [ ] Pointer to active manifest
+  - [ ] vLog epoch
+  - [ ] CRC32C
+- [ ] Implement superblock write (to inactive copy)
+- [ ] Implement superblock read (pick valid copy)
+- [ ] Implement atomic swap (write → fsync → update pointer)
+
+#### Manifest
+- [ ] Define manifest entry types:
+  - [ ] `AddSegment { segment_id, path }`
+  - [ ] `RemoveSegment { segment_id }`
+  - [ ] `AddSSTable { level, path, first_key, last_key }`
+  - [ ] `RemoveSSTable { level, path }`
+  - [ ] `VLogEpoch { epoch }`
+- [ ] Implement append-only manifest log
+- [ ] Implement manifest read (replay to reconstruct state)
+- [ ] Implement manifest checkpoint (compact to single state)
+
+#### Recovery
+- [ ] Implement full recovery sequence:
+  1. Read superblock (pick valid copy)
+  2. Read manifest
+  3. Verify vLog segments exist
+  4. Scan vLog for last good offset
+  5. Rebuild in-memory state
+- [ ] Write crash recovery tests
+
+### commit_log.zig — Commit Log (Group Commit)
+
+#### Commit Record Format
+```
+┌───────────┬───────────────┬────────────────┬──────────────┬───────────┐
+│ txid: u64 │ commit_ts: u64 │ ptr_count: u32 │ vptrs...     │ crc32c    │
+└───────────┴───────────────┴────────────────┴──────────────┴───────────┘
+```
+
+- [ ] Implement commit record encoding/decoding
+- [ ] Implement commit log writer with group commit:
+  - [ ] Buffer pending commits
+  - [ ] Flush batch on threshold (time or count)
+  - [ ] Single `F_FULLFSYNC` for batch
+- [ ] Implement commit log reader
+- [ ] Implement commit log recovery (replay committed txns)
+
+### db.zig — High-Level API (M0 Scope)
+
+- [ ] Define `DB` struct holding vlog, sstable, manifest
+- [ ] Implement `DB.open(path) -> DB`
+- [ ] Implement `DB.put(key, value) -> ValuePointer`
+- [ ] Implement `DB.get(key) -> ?[]const u8`
+- [ ] Implement `DB.flush()` — force MemTable to SSTable
+- [ ] Implement `DB.close()`
+
+### CLI (Basic)
+- [ ] Parse command-line arguments
+- [ ] Implement `put <key> <value>` command
+- [ ] Implement `get <key>` command
+- [ ] Implement `flush` command
+- [ ] Implement `scan` command (iterate all keys)
+
+### M0 Exit Criteria Verification
+- [ ] **Test: Crash-safe** — Fault injection tests pass
+- [ ] **Test: 4 KiB-aligned I/O only** — Assertions in io.zig, no test failures
+- [ ] **Test: Sequential write pattern** — I/O trace shows no random writes
+- [ ] **Test: CLI works** — `put`, `get`, `flush` integration tests pass
+
+---
+
+## M1: LSM + GC + Governor
+
+**Goal:** Full LSM with compaction, vLog GC, and I/O throttling.
+
+### MemTable (In-Memory Buffer)
+
+- [ ] Define `MemTable` interface
+- [ ] Implement skip list data structure:
+  - [ ] Node structure with forward pointers
+  - [ ] Random level generation
   - [ ] Insert operation
   - [ ] Search operation
-  - [ ] Iteration support
-- [ ] Add MemTable size tracking
-- [ ] Implement MemTable snapshot for consistent reads
-- [ ] Add memory limit enforcement
-- [ ] Write unit tests for MemTable operations
+  - [ ] Iteration (in-order)
+- [ ] Add size tracking (bytes used)
+- [ ] Implement freeze (make immutable for flush)
+- [ ] Implement snapshot for consistent reads
+- [ ] Write tests: insert, search, iterate, concurrent access
 
-### 1.4 SSTable Format Design
-- [ ] Define SSTable file format specification
-- [ ] Design data block format
-  - [ ] Block header structure
-  - [ ] Key-value pair encoding
-  - [ ] Compression integration points
-- [ ] Design index block format
-  - [ ] Sparse index structure
-  - [ ] Block offset table
-- [ ] Design footer format (metadata)
-  - [ ] File magic number
-  - [ ] Version information
-  - [ ] Index block offset
-  - [ ] Checksum
-- [ ] Document wire format
+### LSM Tree Structure
 
-### 1.5 SSTable Writer
-- [ ] Implement SSTableBuilder
-  - [ ] Add key-value pairs
-  - [ ] Build data blocks (16KB-64KB target)
-  - [ ] Build index blocks
-  - [ ] Write footer
-- [ ] Add compression support (LZ4)
-  - [ ] Integrate LZ4 library or implement compression
-  - [ ] Compress data blocks
-  - [ ] Store compression metadata
-- [ ] Implement block checksums (xxHash or CRC32C)
-- [ ] Add direct I/O support
-- [ ] Handle file sync/flush
-- [ ] Write unit tests for SSTable writing
+- [ ] Define level structure: L0 (tiered), L1 (tiered), L2+ (leveled)
+- [ ] Track SSTables per level
+- [ ] Implement level size limits:
+  - [ ] L0: 4 files trigger flush
+  - [ ] L1: 64 MB
+  - [ ] L2: 640 MB
+  - [ ] L3+: 10× previous level
+- [ ] Implement SSTable metadata tracking (key range, size, level)
 
-### 1.6 SSTable Reader
-- [ ] Implement SSTable file handle management
-- [ ] Parse SSTable footer
-- [ ] Read and cache index block
-- [ ] Implement block reader
-  - [ ] Read block from file
-  - [ ] Verify checksum
-  - [ ] Decompress block
-- [ ] Implement point lookup (Get)
-  - [ ] Index block search
-  - [ ] Data block search
-  - [ ] Key comparison
-- [ ] Implement range scan iterator
-  - [ ] Seek to start key
-  - [ ] Block-by-block iteration
-  - [ ] Cross-block iteration
-- [ ] Add read caching hooks
-- [ ] Write unit tests for SSTable reading
+### Write Path (Full)
 
-### 1.7 Write-Ahead Log (WAL)
-- [ ] Define WAL record format
-  - [ ] Record header (LSN, checksum, length)
-  - [ ] Record payload (operation type, key, value)
-  - [ ] Transaction markers (BEGIN, COMMIT, ABORT)
-- [ ] Implement WAL writer
-  - [ ] Append records
-  - [ ] Batch writes before fsync
-  - [ ] Group commit optimization
-- [ ] Implement WAL reader
-  - [ ] Sequential read
-  - [ ] Record validation
-  - [ ] Parse records
-- [ ] Add WAL rotation logic
-  - [ ] Create new segment files
-  - [ ] Archive old segments
-- [ ] Implement crash recovery from WAL
-  - [ ] Replay WAL records
-  - [ ] Rebuild MemTable
-  - [ ] Handle partial writes
-- [ ] Write unit tests for WAL operations
-- [ ] Write crash recovery tests
+- [ ] Implement `put` with MemTable:
+  1. Write to commit log (group commit)
+  2. Insert into MemTable
+  3. Check MemTable size threshold
+  4. If full: freeze MemTable, create new one, trigger flush
+- [ ] Implement MemTable flush to L0 SSTable
+- [ ] Update manifest on flush
+- [ ] Handle concurrent writes (mutex or lock-free)
 
-## Phase 2: LSM Engine Core
+### Read Path (Full)
 
-### 2.1 LSM Storage Engine Structure
-- [ ] Define StorageEngine interface
-  - [ ] Put(key, value)
-  - [ ] Get(key)
-  - [ ] Delete(key)
-  - [ ] Scan(start_key, end_key)
-- [ ] Implement LSM-tree manager
-  - [ ] Manage MemTable instances
-  - [ ] Track SSTable levels (L0-L6)
-  - [ ] Metadata persistence
-- [ ] Add manifest file for metadata
-  - [ ] Current version
-  - [ ] List of SSTables per level
-  - [ ] WAL file references
-  - [ ] Next file number
-- [ ] Implement manifest operations (read, write, recover)
+- [ ] Implement `get` with LSM merge:
+  1. Check MemTable
+  2. Check frozen MemTables (if any)
+  3. Check L0 SSTables (all, newest first — may overlap)
+  4. Check L1+ SSTables (binary search — non-overlapping)
+  5. Fetch value from vLog using vptr
+- [ ] Implement `scan` with merge iterator:
+  - [ ] Heap-based merge of all sources
+  - [ ] Handle duplicates (newest wins)
+  - [ ] Handle tombstones (skip deleted)
 
-### 2.2 Write Path
-- [ ] Implement Put operation
-  - [ ] Write to WAL
-  - [ ] Insert into MemTable
-  - [ ] Check MemTable size threshold
-  - [ ] Trigger flush if needed
-- [ ] Implement Delete operation (tombstones)
-  - [ ] Write tombstone to WAL
-  - [ ] Insert tombstone into MemTable
-- [ ] Implement MemTable flush
-  - [ ] Freeze current MemTable
-  - [ ] Create new active MemTable
-  - [ ] Write MemTable to L0 SSTable
-  - [ ] Update manifest
-  - [ ] Delete corresponding WAL segment
-- [ ] Add background flush queue
-- [ ] Write unit tests for write path
+### Bloom Filters
 
-### 2.3 Read Path
-- [ ] Implement Get operation
-  - [ ] Check active MemTable
-  - [ ] Check frozen MemTables
-  - [ ] Search L0 SSTables (newest first)
-  - [ ] Search L1-L6 (binary search per level)
-  - [ ] Return most recent version
-- [ ] Implement Scan operation
-  - [ ] Merge iterators from all sources
-  - [ ] MemTable iterator
-  - [ ] SSTable iterators
-  - [ ] Multi-way merge with heap
-  - [ ] Handle tombstones
-- [ ] Add read-path optimizations
-  - [ ] Early termination on found key
-  - [ ] Skip deleted keys
-- [ ] Write unit tests for read path
-
-### 2.4 Compaction Foundation
-- [ ] Design compaction algorithm (leveled compaction)
-  - [ ] Calculate level sizes and triggers
-  - [ ] Select SSTables for compaction
-  - [ ] Merge algorithm
-- [ ] Implement compaction scoring
-  - [ ] Score each level
-  - [ ] Priority queue for compaction jobs
-- [ ] Implement manual compaction trigger
-- [ ] Add compaction job structure
-  - [ ] Input SSTables
-  - [ ] Output level
-  - [ ] Key range
-- [ ] Write unit tests for compaction selection
-
-### 2.5 Compaction Execution
-- [ ] Implement SSTable merge
-  - [ ] Multi-way merge of sorted SSTables
-  - [ ] Drop older versions (MVCC aware)
-  - [ ] Remove expired tombstones
-  - [ ] Generate output SSTables
-- [ ] Add compaction worker thread
-  - [ ] Background thread pool
-  - [ ] Job queue
-  - [ ] Coordinate with writes
-- [ ] Implement version management during compaction
-  - [ ] Atomic metadata updates
-  - [ ] Keep old SSTables until compaction completes
-  - [ ] Clean up obsolete SSTables
-- [ ] Add compaction throttling (rate limiting)
-- [ ] Write integration tests for compaction
-
-### 2.6 Bloom Filters
-- [ ] Implement Bloom filter data structure
+- [ ] Implement Bloom filter:
   - [ ] Bit array
-  - [ ] Hash functions (2-3 functions)
-  - [ ] Insert operation
-  - [ ] Query operation
-- [ ] Add Bloom filter to SSTable format
-  - [ ] Store in SSTable footer or separate block
-  - [ ] Configure false positive rate (1%)
+  - [ ] Multiple hash functions (use MurmurHash or xxHash)
+  - [ ] Insert key
+  - [ ] Query key (probably in set?)
+- [ ] Configure FPR ≈ 0.1% (tune bits per key)
 - [ ] Build Bloom filter during SSTable creation
-- [ ] Use Bloom filter in Get operation
-- [ ] Write unit tests for Bloom filters
-- [ ] Benchmark Bloom filter effectiveness
+- [ ] Store Bloom filter in SSTable (separate block or footer)
+- [ ] Check Bloom filter before reading SSTable in `get`
+- [ ] Write tests: false positive rate measurement
 
-## Phase 3: Buffer Pool & I/O
+### Compaction — Tiered (L0/L1)
 
-### 3.1 Block Cache
-- [ ] Design cache interface
-  - [ ] Get block
-  - [ ] Put block
-  - [ ] Evict policy
-- [ ] Implement LRU cache
-  - [ ] Hash table for lookup
-  - [ ] Doubly-linked list for LRU ordering
-  - [ ] Thread-safe operations (mutex/RWLock)
-- [ ] Add cache statistics
-  - [ ] Hit rate
-  - [ ] Miss rate
-  - [ ] Eviction count
-- [ ] Integrate cache with SSTable reader
-- [ ] Add cache size limits and enforcement
-- [ ] Write unit tests for block cache
+- [ ] Implement L0 → L1 compaction trigger (file count threshold)
+- [ ] Implement tiered merge:
+  - [ ] Select all L0 files
+  - [ ] Merge-sort into L1 files
+  - [ ] Split output by size (64 MB target)
+- [ ] Update manifest atomically
+- [ ] Delete old SSTables after manifest update
 
-### 3.2 Async I/O Layer (Cross-Platform)
-- [ ] Design cross-platform I/O abstraction layer
-  - [ ] Common interface for async read/write
-  - [ ] Platform detection (comptime in Zig)
-  - [ ] Feature flags for platform-specific code
-- [ ] Implement file handle abstraction
-  - [ ] Platform-specific direct I/O flags (O_DIRECT/F_NOCACHE)
-  - [ ] Aligned buffer allocation (posix_memalign)
-  - [ ] File metadata tracking
-- [ ] **Linux Implementation (io_uring)**
-  - [ ] Research io_uring in Zig (liburing bindings or native)
-  - [ ] Initialize io_uring instance
-  - [ ] Implement async read operation
-    - [ ] Submit io_uring read request (SQE)
-    - [ ] Handle completion (CQE)
-    - [ ] Error handling
-  - [ ] Implement async write operation
-    - [ ] Submit io_uring write request
-    - [ ] Handle completion
-    - [ ] fsync support (IORING_OP_FSYNC)
-  - [ ] Add I/O batching
-    - [ ] Batch multiple I/Os in one submission
-    - [ ] Process completions in batch
-  - [ ] Tune io_uring parameters (queue depth, flags)
-- [ ] **macOS Implementation (kqueue + AIO)**
-  - [ ] Research kqueue in Zig
-  - [ ] Initialize kqueue instance
-  - [ ] Implement async read with POSIX AIO
-    - [ ] Submit aio_read request
-    - [ ] Monitor completion via kqueue (EVFILT_READ)
-    - [ ] Handle completion
-  - [ ] Implement async write with POSIX AIO
-    - [ ] Submit aio_write request
-    - [ ] Monitor completion via kqueue (EVFILT_WRITE)
-    - [ ] fsync support (aio_fsync or fcntl F_FULLFSYNC)
-  - [ ] Add I/O batching with lio_listio
-  - [ ] Handle F_NOCACHE for direct I/O semantics
-- [ ] **Fallback Implementation (POSIX AIO)**
-  - [ ] Implement using standard POSIX aio
-  - [ ] Thread pool for completion handling
-  - [ ] Basic batching support
-- [ ] Write benchmarks for I/O layer
-  - [ ] Compare io_uring vs kqueue vs POSIX AIO
-  - [ ] Test on both Linux and macOS
-  - [ ] Measure throughput and latency
-  - [ ] Test with different queue depths
+### Compaction — Leveled (L2+)
 
-### 3.3 File Management
-- [ ] Implement file naming scheme
-  - [ ] SSTable files: {number}.sst
-  - [ ] WAL files: {number}.wal
-  - [ ] Manifest: MANIFEST-{number}
-  - [ ] Lock file: LOCK
-- [ ] Add file operations
-  - [ ] Create file
-  - [ ] Delete file
-  - [ ] Rename file (atomic)
-  - [ ] List files by pattern
-- [ ] Implement file size tracking
-- [ ] Add disk space monitoring
-- [ ] Implement file cleanup (delete obsolete files)
+- [ ] Implement level size trigger
+- [ ] Implement SSTable selection:
+  - [ ] Pick oldest SSTable in level
+  - [ ] Find overlapping SSTables in next level
+- [ ] Implement leveled merge:
+  - [ ] Merge selected SSTables
+  - [ ] Output non-overlapping SSTables to next level
+- [ ] Handle key range splitting
+- [ ] Update manifest atomically
+- [ ] Delete obsolete SSTables
 
-## Phase 4: MVCC & Transaction Support
+### Compaction Governor (Token Bucket)
 
-### 4.1 Transaction ID Management
-- [ ] Design transaction ID (XID) structure
-  - [ ] 64-bit counter
-  - [ ] Overflow handling
-- [ ] Implement XID allocation
-  - [ ] Atomic counter
-  - [ ] XID wraparound detection
-- [ ] Add transaction status tracking
-  - [ ] In-progress transactions
-  - [ ] Committed transactions
-  - [ ] Aborted transactions
-- [ ] Implement transaction manager
-  - [ ] Begin transaction
-  - [ ] Commit transaction
-  - [ ] Abort transaction
+- [ ] Implement token bucket rate limiter:
+  - [ ] Tokens refill at fixed rate
+  - [ ] I/O operations consume tokens
+  - [ ] Block if no tokens available
+- [ ] Configure separate buckets for:
+  - [ ] Compaction I/O
+  - [ ] Compaction CPU
+- [ ] Implement adaptive throttling:
+  - [ ] Monitor p95/p99 read latency
+  - [ ] Reduce compaction budget when latency rises
+  - [ ] Increase budget when latency drops
+- [ ] Add compaction metrics (bytes written, time spent)
 
-### 4.2 Tuple Versioning
-- [ ] Define tuple header format
-  - [ ] xmin (creating XID)
-  - [ ] xmax (deleting XID)
-  - [ ] Flags (committed, deleted, etc.)
-- [ ] Extend MemTable to store tuple versions
-- [ ] Extend SSTable format for MVCC data
-- [ ] Implement multi-version storage in LSM
-  - [ ] Keep multiple versions during compaction
-  - [ ] Respect snapshot visibility rules
+### vLog Garbage Collection
 
-### 4.3 Snapshot Isolation
-- [ ] Implement snapshot data structure
-  - [ ] Snapshot XID
-  - [ ] Active transaction list
-- [ ] Add snapshot acquisition (on BEGIN)
-- [ ] Implement visibility check
-  - [ ] Tuple visible to snapshot?
-  - [ ] Handle in-progress transactions
-  - [ ] Handle committed/aborted transactions
-- [ ] Integrate visibility checks with read path
-  - [ ] Filter invisible tuples in Get
-  - [ ] Filter invisible tuples in Scan
-- [ ] Write unit tests for snapshot isolation
+- [ ] Track vLog segment usage:
+  - [ ] Count live bytes per segment
+  - [ ] Update during compaction (when vptrs change)
+- [ ] Implement GC trigger:
+  - [ ] Space trigger: segment < 50% live
+  - [ ] Age trigger: segment older than threshold
+- [ ] Implement GC process:
+  1. Select candidate segment
+  2. Scan LSM for live vptrs pointing to segment
+  3. Copy live values to new segment
+  4. Update vptrs in LSM (via remap table)
+  5. Delete old segment
+- [ ] Implement remap table (old vptr → new vptr)
+- [ ] Handle concurrent reads during GC
 
-### 4.4 Garbage Collection
-- [ ] Design vacuum policy
-  - [ ] Determine safe garbage collection point
-  - [ ] Track oldest active snapshot
-- [ ] Implement tuple expiration logic
-  - [ ] Check if old version is visible to any snapshot
-  - [ ] Mark as garbage
-- [ ] Integrate garbage collection with compaction
-  - [ ] Remove expired tuples during compaction
-  - [ ] Remove expired tombstones
-- [ ] Add manual VACUUM command
-- [ ] Add auto-vacuum background worker
-- [ ] Write tests for garbage collection
+### Background Workers
 
-## Phase 5: Query Engine Foundation
+- [ ] Implement background thread pool
+- [ ] Implement flush worker (MemTable → SSTable)
+- [ ] Implement compaction worker
+- [ ] Implement GC worker
+- [ ] Add graceful shutdown (drain queues)
 
-### 5.1 Table Schema
-- [ ] Define column data types
-  - [ ] INTEGER (32-bit, 64-bit)
-  - [ ] BOOLEAN
-  - [ ] TEXT/VARCHAR
-  - [ ] FLOAT/DOUBLE
-  - [ ] TIMESTAMP
-- [ ] Implement schema definition structure
-  - [ ] Table name
-  - [ ] Column definitions (name, type, constraints)
-  - [ ] Primary key
-- [ ] Add schema encoding/decoding
-- [ ] Store schemas in system catalog (in LSM)
+### M1 Exit Criteria Verification
+- [ ] **Benchmark: Ingest ≥ 100 MB/s** — Sustained write benchmark
+- [ ] **Benchmark: Host WAF ≤ 4×** — Measure bytes written to device / bytes from app
+- [ ] **Benchmark: p99 read stable during compaction** — No 10× latency spikes
 
-### 5.2 Tuple Format
-- [ ] Design tuple layout
-  - [ ] MVCC header
+---
+
+## M2: MVCC (Snapshot Isolation) + Correctness
+
+**Goal:** Transaction support with snapshot isolation, verified correct.
+
+### Transaction Manager
+
+- [ ] Define `TransactionId` (u64)
+- [ ] Define `Timestamp` (u64, monotonic)
+- [ ] Implement transaction ID allocator (atomic counter)
+- [ ] Implement timestamp allocator (HLC or monotonic clock)
+- [ ] Track active transactions
+- [ ] Track committed transactions (with commit timestamps)
+
+### Snapshot Management
+
+- [ ] Define `Snapshot` struct:
+  - [ ] `read_ts`: timestamp when snapshot was taken
+  - [ ] `active_txns`: list of in-progress transaction IDs
+- [ ] Implement `beginTransaction() -> Snapshot`
+- [ ] Implement `commitTransaction(txn_id, writes) -> commit_ts`
+- [ ] Implement `abortTransaction(txn_id)`
+
+### MVCC in LSM
+
+- [ ] Extend SSTable entry to include `commit_ts`:
+  ```
+  Entry: [k_len | key | commit_ts | vptr | is_tombstone]
+  ```
+- [ ] Store multiple versions per key
+- [ ] Sort by (key, commit_ts DESC) in SSTable
+
+### Visibility Check
+
+- [ ] Implement visibility rule:
+  ```
+  visible(version, snapshot) =
+    version.commit_ts <= snapshot.read_ts AND
+    version.commit_ts NOT IN snapshot.active_txns AND
+    (no newer version visible OR version is tombstone)
+  ```
+- [ ] Integrate visibility into `get`:
+  - [ ] Scan versions from newest to oldest
+  - [ ] Return first visible version
+  - [ ] Return null if tombstone is visible
+- [ ] Integrate visibility into `scan`:
+  - [ ] Filter invisible versions
+  - [ ] Skip tombstoned keys
+
+### Write-Write Conflict Detection
+
+- [ ] Track write set per transaction
+- [ ] On commit, check for conflicts:
+  - [ ] Any key written by another committed txn since our snapshot?
+  - [ ] If yes, abort with conflict error
+- [ ] Implement optimistic concurrency control
+
+### Tombstones
+
+- [ ] Implement delete as tombstone write
+- [ ] Propagate tombstones through compaction
+- [ ] Expire tombstones when no snapshot can see the deleted version
+
+### Garbage Collection (MVCC-Aware)
+
+- [ ] Track `global_safe_ts` = min(all active snapshot read_ts)
+- [ ] During compaction:
+  - [ ] Drop versions where `commit_ts < global_safe_ts` AND newer version exists
+  - [ ] Keep tombstones until no snapshot can see deleted version
+- [ ] During vLog GC:
+  - [ ] Only collect values not referenced by any visible version
+
+### Recovery Invariants
+
+- [ ] On recovery, rebuild active transaction state
+- [ ] Abort any in-progress transactions (not in commit log)
+- [ ] Verify committed transactions have durable values
+
+### Correctness Testing
+
+- [ ] Integrate SQLLogicTest runner (subset of tests)
+- [ ] Integrate Elle (Jepsen's checker):
+  - [ ] Generate transaction histories
+  - [ ] Check for SI anomalies (write cycles, etc.)
+  - [ ] Assert no anomalies found
+- [ ] Write targeted tests:
+  - [ ] Read-your-own-writes
+  - [ ] Snapshot sees consistent state
+  - [ ] Write-write conflict detection
+  - [ ] Tombstone visibility
+
+### M2 Exit Criteria Verification
+- [ ] **Test: SQLLogicTest subset green**
+- [ ] **Test: Elle shows no SI anomalies**
+- [ ] **Test: Crash recovery tests pass**
+
+---
+
+## M3: PostgreSQL Wire Protocol + Minimal SQL
+
+**Goal:** `psql` can connect and run basic queries.
+
+### TCP Server
+
+- [ ] Implement TCP listener (port 5432 default)
+- [ ] Accept connections
+- [ ] Spawn connection handler per client
+- [ ] Implement connection timeout
+- [ ] Implement graceful shutdown
+
+### Protocol Message Framing
+
+- [ ] Implement message reading:
+  - [ ] Read message type (1 byte) — except startup
+  - [ ] Read message length (4 bytes, big-endian)
+  - [ ] Read payload
+- [ ] Implement message writing:
+  - [ ] Write type + length + payload
+
+### Startup Flow
+
+- [ ] Parse StartupMessage:
+  - [ ] Protocol version (3.0 = 196608)
+  - [ ] Parameters (user, database, etc.)
+- [ ] Send AuthenticationOk (for now, no auth)
+- [ ] Send ParameterStatus messages (server_version, etc.)
+- [ ] Send BackendKeyData (process ID, secret key)
+- [ ] Send ReadyForQuery ('I' for idle)
+
+### Authentication (Basic)
+
+- [ ] Implement AuthenticationCleartextPassword
+- [ ] Implement password verification (hardcoded or file-based)
+- [ ] Plan for MD5/SCRAM later
+
+### Simple Query Protocol
+
+- [ ] Receive Query message (SQL string)
+- [ ] Parse SQL (see below)
+- [ ] Execute query
+- [ ] Send RowDescription (column metadata)
+- [ ] Send DataRow (for each row)
+- [ ] Send CommandComplete (e.g., "SELECT 3")
+- [ ] Send ReadyForQuery
+
+### SQL Parser
+
+- [ ] Evaluate options:
+  - [ ] Hand-written recursive descent (simple subset)
+  - [ ] pg_query C bindings (full Postgres parser)
+- [ ] Implement/integrate parser for:
+  - [ ] `CREATE TABLE name (col type, ...)`
+  - [ ] `INSERT INTO table (cols) VALUES (...)`
+  - [ ] `SELECT cols FROM table WHERE ...`
+  - [ ] `BEGIN`
+  - [ ] `COMMIT`
+  - [ ] `ROLLBACK`
+- [ ] Generate AST for each statement type
+
+### Schema & Catalog
+
+- [ ] Define `TableDef` struct (name, columns, primary key)
+- [ ] Define `ColumnDef` struct (name, type, nullable)
+- [ ] Implement supported types:
+  - [ ] `INTEGER` / `BIGINT`
+  - [ ] `TEXT` / `VARCHAR(n)`
+  - [ ] `BOOLEAN`
+  - [ ] `TIMESTAMP`
+- [ ] Store schemas in LSM (system namespace)
+- [ ] Implement `CREATE TABLE` executor
+- [ ] Implement schema lookup by table name
+
+### Tuple Encoding
+
+- [ ] Define tuple format:
   - [ ] Null bitmap
-  - [ ] Fixed-length fields
-  - [ ] Variable-length field offsets
-  - [ ] Variable-length field data
-- [ ] Implement tuple serialization
-- [ ] Implement tuple deserialization
-- [ ] Add tuple accessor methods (get column value)
-- [ ] Write unit tests for tuple operations
+  - [ ] Fixed-size columns (inline)
+  - [ ] Variable-size columns (length-prefixed)
+- [ ] Implement `encodeTuple(schema, values) -> []u8`
+- [ ] Implement `decodeTuple(schema, bytes) -> []Value`
 
-### 5.3 System Catalog
-- [ ] Define system tables
-  - [ ] pg_class (tables)
-  - [ ] pg_attribute (columns)
-  - [ ] pg_index (indexes)
-  - [ ] pg_type (data types)
-- [ ] Implement catalog initialization
-  - [ ] Bootstrap catalog on first run
-  - [ ] Create system tables
-- [ ] Add catalog operations
-  - [ ] Create table
-  - [ ] Drop table
-  - [ ] Lookup table by name
-  - [ ] List all tables
-- [ ] Cache catalog in memory
-- [ ] Write tests for catalog operations
+### Query Execution
 
-### 5.4 Basic SQL Parser Integration
-- [ ] Evaluate SQL parser options
-  - [ ] pg_query (C library with Zig bindings)
-  - [ ] Custom parser (if needed)
-- [ ] Integrate parser library
-- [ ] Parse CREATE TABLE statement
-- [ ] Parse INSERT statement
-- [ ] Parse SELECT statement (simple)
-- [ ] Parse UPDATE statement
-- [ ] Parse DELETE statement
-- [ ] Generate Abstract Syntax Tree (AST)
-- [ ] Write tests for parser integration
-
-### 5.5 Simple Query Executor
-- [ ] Implement table scan operator
-  - [ ] Open table
-  - [ ] Iterate tuples
-  - [ ] Apply predicate filter
-- [ ] Implement INSERT executor
-  - [ ] Generate new tuple
-  - [ ] Assign ROWID/XID
-  - [ ] Write to storage engine
-- [ ] Implement DELETE executor
-  - [ ] Find tuples matching condition
-  - [ ] Write tombstones
-- [ ] Implement UPDATE executor
-  - [ ] Find tuples (scan)
-  - [ ] Write new versions
-  - [ ] Mark old versions deleted
-- [ ] Implement simple SELECT executor
-  - [ ] Scan table
-  - [ ] Apply WHERE filter
+- [ ] Implement `INSERT` executor:
+  - [ ] Parse values
+  - [ ] Encode tuple
+  - [ ] Put to storage engine (within transaction)
+- [ ] Implement `SELECT` executor:
+  - [ ] Open table scan
+  - [ ] Apply WHERE filter (basic: `col = value`, `col > value`)
   - [ ] Project columns
-  - [ ] Return result set
-- [ ] Write integration tests for basic queries
+  - [ ] Return rows
+- [ ] Implement `BEGIN` / `COMMIT` / `ROLLBACK`
+- [ ] Implement primary key lookup optimization
 
-## Phase 6: Indexing
+### Result Formatting
 
-### 6.1 Primary Index
-- [ ] Design primary key storage
-  - [ ] Use table's LSM tree
-  - [ ] Cluster by primary key
-- [ ] Implement primary key uniqueness check
-- [ ] Add primary key constraint validation
-- [ ] Optimize queries using primary key
-  - [ ] Point lookups
-  - [ ] Range scans
+- [ ] Implement text format for each type:
+  - [ ] Integer → string
+  - [ ] Text → as-is
+  - [ ] Boolean → "t" / "f"
+  - [ ] Timestamp → ISO 8601
+  - [ ] NULL → null indicator
+- [ ] Build RowDescription from schema
+- [ ] Build DataRow from tuple
 
-### 6.2 Secondary Index Structure
-- [ ] Design secondary index storage
-  - [ ] Separate LSM tree per index
-  - [ ] Index key → Primary key mapping
-- [ ] Define index metadata
-  - [ ] Index name
-  - [ ] Indexed columns
-  - [ ] Index type (B-tree-like via LSM)
-- [ ] Implement index creation
-  - [ ] Scan base table
-  - [ ] Build index entries
-  - [ ] Write to index LSM tree
-- [ ] Store index metadata in catalog
+### Error Handling
 
-### 6.3 Index Maintenance
-- [ ] Update indexes on INSERT
-  - [ ] Extract indexed columns
-  - [ ] Write to index LSM trees
-- [ ] Update indexes on DELETE
-  - [ ] Write tombstones to indexes
-- [ ] Update indexes on UPDATE
-  - [ ] Delete old index entries
-  - [ ] Insert new index entries
-- [ ] Handle index corruption detection
-- [ ] Implement REINDEX command
+- [ ] Implement ErrorResponse message:
+  - [ ] Severity (ERROR, FATAL, etc.)
+  - [ ] Code (SQLSTATE)
+  - [ ] Message
+- [ ] Map internal errors to SQLSTATE codes
+- [ ] Send error and remain ready for next query
 
-### 6.4 Index Usage in Queries
-- [ ] Implement index scan operator
-  - [ ] Seek to start key in index
-  - [ ] Scan index LSM tree
-  - [ ] Fetch tuples via primary key
-- [ ] Add index selection in planner
-  - [ ] Analyze WHERE clause
-  - [ ] Choose best index
-  - [ ] Cost estimation
-- [ ] Optimize index-only scans (if possible)
-- [ ] Write tests for index queries
-
-## Phase 7: Postgres Wire Protocol
-
-### 7.1 Connection Handling
-- [ ] Implement TCP server
-  - [ ] Listen on port (default 5432)
-  - [ ] Accept connections
-  - [ ] Handle multiple clients
-- [ ] Implement connection state machine
-  - [ ] Startup
-  - [ ] Authentication
-  - [ ] Ready for query
-  - [ ] Query execution
-  - [ ] Termination
-- [ ] Add connection pooling (optional)
-
-### 7.2 Protocol Messages
-- [ ] Implement message framing
-  - [ ] Message type (1 byte)
-  - [ ] Message length (4 bytes)
-  - [ ] Message payload
-- [ ] Implement startup message handling
-  - [ ] Parse client parameters
-  - [ ] Protocol version negotiation
-- [ ] Implement authentication messages
-  - [ ] AuthenticationOk
-  - [ ] AuthenticationMD5Password
-  - [ ] PasswordMessage
-- [ ] Implement query messages
-  - [ ] Query (simple query)
-  - [ ] Parse (prepared statement)
-  - [ ] Bind
-  - [ ] Execute
-  - [ ] Describe
-- [ ] Implement response messages
-  - [ ] RowDescription
-  - [ ] DataRow
-  - [ ] CommandComplete
-  - [ ] ReadyForQuery
-  - [ ] ErrorResponse
-
-### 7.3 Authentication
-- [ ] Implement MD5 authentication
-  - [ ] Generate salt
-  - [ ] Verify MD5 hash
-  - [ ] User database (simple file or table)
-- [ ] Add clear text password option (dev only)
-- [ ] Plan for SCRAM-SHA-256 (future)
-
-### 7.4 Query Processing Pipeline
-- [ ] Implement simple query protocol
-  - [ ] Receive Query message
-  - [ ] Parse SQL
-  - [ ] Execute query
-  - [ ] Send RowDescription
-  - [ ] Send DataRow(s)
-  - [ ] Send CommandComplete
-- [ ] Implement extended query protocol
-  - [ ] Parse → Bind → Execute flow
-  - [ ] Named prepared statements
-  - [ ] Parameter binding
-- [ ] Add error handling and reporting
-  - [ ] SQL errors
-  - [ ] Protocol errors
-  - [ ] Format ErrorResponse messages
-
-### 7.5 Result Formatting
-- [ ] Implement text format encoding
-  - [ ] Integer to string
-  - [ ] Float to string
-  - [ ] Boolean to string
-  - [ ] Timestamp to string
-- [ ] Implement binary format (optional)
-- [ ] Handle NULL values
-- [ ] Add COPY protocol support (future)
-
-## Phase 8: Query Planning & Optimization
-
-### 8.1 Query Planner
-- [ ] Implement logical plan generation
-  - [ ] Scan operators
-  - [ ] Filter (WHERE)
-  - [ ] Project (SELECT columns)
-  - [ ] Join operators
-  - [ ] Aggregate operators
-- [ ] Implement physical plan generation
-  - [ ] SeqScan
-  - [ ] IndexScan
-  - [ ] NestedLoopJoin
-  - [ ] HashJoin
-  - [ ] HashAggregate
-- [ ] Add plan optimization rules
-  - [ ] Predicate pushdown
-  - [ ] Projection pushdown
-  - [ ] Join reordering
-
-### 8.2 Cost Model
-- [ ] Define cost parameters
-  - [ ] Sequential I/O cost (low for SSD)
-  - [ ] Random I/O cost (very low for SSD)
-  - [ ] CPU cost
-  - [ ] Memory cost
-- [ ] Implement table statistics
-  - [ ] Row count
-  - [ ] Average row size
-  - [ ] Data size
-- [ ] Implement index statistics
-  - [ ] Cardinality
-  - [ ] Selectivity
-- [ ] Implement cost estimation
-  - [ ] Scan cost
-  - [ ] Index scan cost
-  - [ ] Join cost
-- [ ] Tune cost model for SSD characteristics
-
-### 8.3 Join Algorithms
-- [ ] Implement nested loop join
-  - [ ] Outer loop
-  - [ ] Inner loop (scan or index lookup)
-- [ ] Implement hash join
-  - [ ] Build hash table
-  - [ ] Probe hash table
-  - [ ] Handle large inputs (spill to disk)
-- [ ] Implement merge join (optional)
-- [ ] Write tests for join operators
-
-### 8.4 Aggregation
-- [ ] Implement hash aggregation
-  - [ ] Build hash table of groups
-  - [ ] Compute aggregate functions (SUM, COUNT, AVG, MIN, MAX)
-  - [ ] Output results
-- [ ] Implement sort-based aggregation (optional)
-- [ ] Support GROUP BY
-- [ ] Support HAVING
-- [ ] Write tests for aggregation
-
-## Phase 9: Advanced Features
-
-### 9.1 Transaction Commands
-- [ ] Implement BEGIN command
-- [ ] Implement COMMIT command
-- [ ] Implement ROLLBACK command
-- [ ] Add savepoints (SAVEPOINT, ROLLBACK TO)
-- [ ] Test transaction scenarios
-  - [ ] Read committed isolation
-  - [ ] Repeatable read isolation
-  - [ ] Serializable isolation (future)
-
-### 9.2 Write-Ahead Log Enhancements
-- [ ] Implement WAL archiving
-- [ ] Add point-in-time recovery (PITR)
-- [ ] Implement WAL compression
-- [ ] Add WAL integrity checking
-
-### 9.3 Crash Recovery
-- [ ] Implement recovery manager
-  - [ ] Detect incomplete shutdown
-  - [ ] Replay WAL from checkpoint
-  - [ ] Rebuild in-memory state
-- [ ] Add checkpointing
-  - [ ] Flush all dirty pages
-  - [ ] Record checkpoint in WAL
-  - [ ] Truncate old WAL segments
-- [ ] Write crash recovery tests
-  - [ ] Simulate crashes at various points
-  - [ ] Verify data integrity after recovery
-
-### 9.4 Concurrency Control
-- [ ] Implement lock manager
-  - [ ] Table-level locks
-  - [ ] Row-level locks (optional)
-  - [ ] Deadlock detection
-- [ ] Add lock modes
-  - [ ] Shared (S)
-  - [ ] Exclusive (X)
-  - [ ] Intent locks (IS, IX)
-- [ ] Integrate locks with transactions
-- [ ] Test concurrent workloads
-
-## Phase 10: Performance Optimization
-
-### 10.1 SSD-Specific Tuning
-- [ ] Tune block sizes
-  - [ ] Benchmark 4KB vs 16KB vs 64KB
-  - [ ] Optimize for target SSD
-- [ ] Optimize alignment
-  - [ ] Align writes to SSD pages
-  - [ ] Verify alignment in I/O layer
-- [ ] Tune compaction parameters
-  - [ ] Level size multipliers
-  - [ ] Compaction trigger thresholds
-  - [ ] Parallelism settings
-- [ ] Benchmark write amplification
-  - [ ] Measure bytes written vs bytes inserted
-  - [ ] Target < 10x amplification
-
-### 10.2 Parallelism
-- [ ] Add parallel query execution
-  - [ ] Parallel scans
-  - [ ] Parallel joins
-  - [ ] Parallel aggregation
-- [ ] Implement parallel compaction
-  - [ ] Multiple compaction threads
-  - [ ] Partition key ranges
-- [ ] Add parallel WAL replay (recovery)
-
-### 10.3 Benchmarking
-- [ ] Set up standard benchmarks
-  - [ ] YCSB (Yahoo Cloud Serving Benchmark)
-  - [ ] TPC-C (simplified)
-  - [ ] Custom workloads
-- [ ] Benchmark vs Postgres
-  - [ ] Write throughput
-  - [ ] Read latency
-  - [ ] Mixed workloads
-- [ ] **Cross-Platform Performance Testing**
-  - [ ] Run benchmarks on Linux (io_uring)
-  - [ ] Run benchmarks on macOS (kqueue)
-  - [ ] Compare performance across platforms
-  - [ ] Test on different SSD types (NVMe vs SATA)
-  - [ ] Verify consistent behavior across platforms
-- [ ] Profile hot paths
-  - [ ] CPU profiling (perf on Linux, Instruments on macOS)
-  - [ ] I/O profiling (iostat, iotop)
-  - [ ] Memory profiling (valgrind, Instruments)
-- [ ] Optimize based on profiling results
-  - [ ] Platform-specific optimizations where beneficial
-  - [ ] Ensure consistent performance across platforms
-
-### 10.4 Memory Optimization
-- [ ] Reduce memory allocations
-  - [ ] Object pooling
-  - [ ] Arena allocators
-- [ ] Optimize data structure sizes
-  - [ ] Packed structures
-  - [ ] Remove padding
-- [ ] Tune cache sizes dynamically
-
-## Phase 11: Observability & Operations
-
-### 11.1 Monitoring
-- [ ] Add metrics collection
-  - [ ] Write throughput (ops/sec, bytes/sec)
-  - [ ] Read throughput
-  - [ ] Latency percentiles (p50, p95, p99)
-  - [ ] Cache hit rates
-  - [ ] Compaction metrics
-- [ ] Implement metrics export
-  - [ ] Prometheus format
-  - [ ] JSON API
-- [ ] Add logging
-  - [ ] Structured logging
-  - [ ] Log levels (DEBUG, INFO, WARN, ERROR)
-  - [ ] Rotation and retention
-
-### 11.2 Configuration
-- [ ] Implement configuration file parsing
-  - [ ] TOML or INI format
-  - [ ] Parameter validation
-- [ ] Add runtime configuration
-  - [ ] View current settings (SHOW command)
-  - [ ] Modify settings (SET command)
-- [ ] Document all configuration options
-
-### 11.3 Backup & Restore
-- [ ] Implement snapshot backup
-  - [ ] Consistent point-in-time snapshot
-  - [ ] Copy SSTables and WAL
-- [ ] Implement incremental backup
-  - [ ] Track changed SSTables
-  - [ ] Backup only changes
-- [ ] Implement restore
-  - [ ] Copy files to data directory
-  - [ ] Replay WAL if needed
-- [ ] Add backup verification
-
-### 11.4 Replication (Future)
-- [ ] Design replication protocol
-  - [ ] Streaming replication
-  - [ ] Logical replication
-- [ ] Implement primary-replica setup
-- [ ] Add replica lag monitoring
-- [ ] Implement failover (basic)
-
-## Phase 12: Testing & Quality
-
-### 12.1 Unit Tests
-- [ ] Achieve 80%+ code coverage
-- [ ] Test edge cases
-  - [ ] Empty inputs
-  - [ ] Large inputs
-  - [ ] Concurrent access
-- [ ] Test error paths
-
-### 12.2 Integration Tests
-- [ ] Test end-to-end workflows
-  - [ ] Insert → Query
-  - [ ] Update → Query
-  - [ ] Delete → Query
-- [ ] Test concurrent transactions
-- [ ] Test recovery scenarios
-- [ ] Test upgrade paths
-- [ ] **Cross-Platform Integration Testing**
-  - [ ] Run full test suite on Linux
-  - [ ] Run full test suite on macOS
-  - [ ] Verify consistent behavior across platforms
-  - [ ] Test platform-specific I/O code paths
-  - [ ] Test direct I/O (O_DIRECT vs F_NOCACHE)
-  - [ ] Test fsync semantics (Linux vs macOS F_FULLFSYNC)
-
-### 12.3 Postgres Compatibility Tests
-- [ ] Run subset of Postgres regression tests
-- [ ] Identify compatibility gaps
-- [ ] Document unsupported features
-- [ ] Prioritize compatibility fixes
-
-### 12.4 Stress Testing
-- [ ] Long-running stability tests
-- [ ] High-throughput tests
-- [ ] Large dataset tests (100GB+)
-- [ ] Chaos testing (random failures)
-
-## Phase 13: Documentation & Packaging
-
-### 13.1 User Documentation
-- [ ] Write installation guide
-- [ ] Write configuration guide
-- [ ] Write SQL reference (supported features)
-- [ ] Add tutorials and examples
-- [ ] Create troubleshooting guide
-
-### 13.2 Developer Documentation
-- [ ] Document architecture
-- [ ] Document code organization
-- [ ] Add inline code comments
-- [ ] Create contribution guide
-- [ ] Document testing procedures
-
-### 13.3 Packaging
-- [ ] Create installation packages
-  - [ ] **Linux:** .deb (Debian/Ubuntu), .rpm (RedHat/CentOS)
-  - [ ] **macOS:** .pkg installer, Homebrew formula
-  - [ ] **Cross-platform:** Binary tarballs for both Linux and macOS
-- [ ] Add Docker image (Linux-based)
-- [ ] Publish to package repositories
-  - [ ] apt repository (Linux)
-  - [ ] Homebrew (macOS)
-  - [ ] Docker Hub
-
-### 13.4 Release Management
-- [ ] Define versioning scheme (SemVer)
-- [ ] Create release process
-- [ ] Generate changelogs
-- [ ] Tag releases in git
-- [ ] Publish release notes
+### M3 Exit Criteria Verification
+- [ ] **Test: `psql` connects and works**
+  - [ ] Connect with `psql -h localhost`
+  - [ ] Run `CREATE TABLE`
+  - [ ] Run `INSERT`
+  - [ ] Run `SELECT`
+- [ ] **Test: SQLLogicTest subset over wire protocol**
+- [ ] **Benchmark: YCSB A/C/F adapters run**
+  - [ ] Implement YCSB-compatible schema
+  - [ ] Run workload A (50% read, 50% update)
+  - [ ] Run workload C (100% read)
+  - [ ] Run workload F (50% read, 50% read-modify-write)
 
 ---
 
-## Priority Order (Suggested)
+## M4: Observability + QoS Polish
 
-**Critical Path (Must Have for MVP):**
-1. Phase 1: Foundation (MemTable, SSTable, WAL)
-2. Phase 2: LSM Engine (read/write paths, compaction)
-3. Phase 4: Basic MVCC (XID, snapshots)
-4. Phase 5: Query Engine (schema, catalog, basic executor)
-5. Phase 7: Postgres Protocol (connection, query messages)
-6. Phase 9.3: Crash Recovery (basic recovery)
+**Goal:** Metrics, histograms, SLO-aware tuning.
 
-**High Priority (For Beta):**
-1. Phase 3: Buffer Pool & I/O (block cache, direct I/O)
-2. Phase 6: Indexing (secondary indexes)
-3. Phase 8: Query Planner (basic optimization)
-4. Phase 10: Performance Tuning (SSD optimization)
-5. Phase 11: Observability (metrics, logging)
+### Metrics Collection
 
-**Medium Priority (Post-Launch):**
-1. Phase 9: Advanced Features (transactions, savepoints)
-2. Phase 10.2-10.4: Advanced Performance (parallelism, profiling)
-3. Phase 11.3: Backup & Restore
-4. Phase 12: Comprehensive Testing
+- [ ] Implement metrics registry
+- [ ] Add counters:
+  - [ ] `storage_puts_total`
+  - [ ] `storage_gets_total`
+  - [ ] `storage_scans_total`
+  - [ ] `compaction_runs_total`
+  - [ ] `gc_runs_total`
+- [ ] Add gauges:
+  - [ ] `memtable_size_bytes`
+  - [ ] `level_size_bytes{level}`
+  - [ ] `vlog_live_bytes`
+  - [ ] `vlog_garbage_bytes`
+  - [ ] `active_transactions`
 
-**Low Priority (Future):**
-1. Phase 11.4: Replication
-2. Advanced SQL features (window functions, CTEs, etc.)
-3. Advanced indexing (partial indexes, expression indexes)
+### Latency Histograms
+
+- [ ] Implement HDR histogram (or similar):
+  - [ ] Configurable precision
+  - [ ] Efficient percentile queries
+- [ ] Track latency distributions:
+  - [ ] `get_latency_seconds`
+  - [ ] `put_latency_seconds`
+  - [ ] `commit_latency_seconds`
+  - [ ] `compaction_duration_seconds`
+- [ ] Expose p50, p95, p99, p999
+
+### Write Amplification Tracking
+
+- [ ] Track `bytes_written_by_app`
+- [ ] Track `bytes_written_to_device`
+- [ ] Calculate and expose `host_waf = device / app`
+- [ ] Track per-component: vLog, SSTable, commit log
+
+### Queue Depth Monitoring
+
+- [ ] Track current I/O queue depth
+- [ ] Track max queue depth
+- [ ] Alert/log when approaching saturation
+
+### Metrics Export
+
+- [ ] Implement Prometheus exposition format endpoint
+- [ ] Implement JSON metrics endpoint
+- [ ] Add `/metrics` HTTP handler (simple HTTP server)
+
+### SLO-Aware Compaction
+
+- [ ] Define SLO thresholds (e.g., p99 < 5ms)
+- [ ] Implement SLO monitor:
+  - [ ] Check p99 every N seconds
+  - [ ] Compare to threshold
+- [ ] Implement adaptive response:
+  - [ ] p99 > threshold: reduce compaction budget 50%
+  - [ ] p99 < threshold * 0.5: increase compaction budget
+- [ ] Add hysteresis to prevent oscillation
+
+### Admin Commands
+
+- [ ] Implement `SHOW METRICS` SQL command
+- [ ] Implement `SHOW WAF` command
+- [ ] Implement `VACUUM` command (trigger GC)
+- [ ] Implement `COMPACT` command (trigger compaction)
+
+### Logging
+
+- [ ] Implement structured logging
+- [ ] Add log levels (DEBUG, INFO, WARN, ERROR)
+- [ ] Log significant events:
+  - [ ] Compaction start/end
+  - [ ] GC start/end
+  - [ ] SLO violations
+  - [ ] Recovery events
+
+### M4 Exit Criteria Verification
+- [ ] **Test: Tail latency bounded under sustained background work**
+  - [ ] Run write workload + read workload concurrently
+  - [ ] Measure p99 during compaction
+  - [ ] Assert p99 stays within SLO
+- [ ] **Test: Operators can monitor system health**
+  - [ ] Metrics endpoint returns data
+  - [ ] Histograms show reasonable values
 
 ---
 
-## Estimated Effort
+## M5: ZNS Backend (Optional)
 
-- **Total Tasks:** ~300 individual tasks
-- **Estimated Timeline:** 6-9 months (1-2 developers full-time)
-- **MVP (Critical Path):** 3-4 months
-- **Beta (High Priority):** 5-6 months
-- **Production Ready:** 9-12 months
+**Goal:** Exploit Zoned Namespace SSDs for lower WAF and tighter tail latency.
 
-## Notes
+### ZNS Understanding
+- [ ] Research ZNS concepts:
+  - [ ] Zones and zone states
+  - [ ] Sequential write requirement
+  - [ ] Zone capacity vs size
+  - [ ] Zone reset
+- [ ] Identify ZNS device for testing (or use emulation)
 
-- Tasks are intentionally granular for tracking progress
-- Each major task should have corresponding tests
-- Benchmark after major phases to validate SSD optimizations
-- Iterate on design based on performance results
-- Focus on correctness before performance
-- Document assumptions and trade-offs
+### Zone Management
+- [ ] Implement zone discovery (list zones, capacities)
+- [ ] Implement zone state tracking (empty, open, full, etc.)
+- [ ] Implement zone allocation strategy
+- [ ] Map LSM levels to zones:
+  - [ ] L0/L1: hot zones (frequently reset)
+  - [ ] L2+: cold zones (infrequent rewrite)
+
+### Sequential Write Enforcement
+- [ ] Ensure all writes within zone are sequential
+- [ ] Buffer writes to maintain sequentiality
+- [ ] Handle zone wrap-around
+
+### GC via Zone Reset
+- [ ] Replace copy-based GC with zone reset
+- [ ] Track zone liveness
+- [ ] Implement zone selection for reset (least live data)
+- [ ] Coordinate with compaction
+
+### M5 Exit Criteria Verification
+- [ ] **Benchmark: Lower device-level WAF vs block backend**
+- [ ] **Benchmark: Tighter p99 under compaction**
+
+---
+
+## Ongoing: Cross-Cutting Concerns
+
+### Linux Backend (Post-M0)
+- [ ] Implement io_uring backend:
+  - [ ] Initialize io_uring instance
+  - [ ] Submit read/write SQEs
+  - [ ] Harvest CQEs
+  - [ ] Handle errors
+- [ ] Implement O_DIRECT support
+- [ ] Implement `fdatasync` / `fsync`
+- [ ] Benchmark io_uring vs macOS kqueue
+
+### Windows Backend (Future)
+- [ ] Research IOCP (I/O Completion Ports)
+- [ ] Implement Windows I/O backend
+- [ ] Handle unbuffered I/O
+
+### Testing Throughout
+- [ ] Unit tests for each module
+- [ ] Integration tests for each milestone
+- [ ] Crash/recovery tests (fault injection)
+- [ ] Performance regression tests
+- [ ] Cross-platform CI (macOS now, Linux later)
+
+### Documentation Throughout
+- [ ] API documentation (doc comments)
+- [ ] Architecture documentation (how it works)
+- [ ] Operations guide (how to run, configure, monitor)
+
+---
+
+## Hypothesis Validation Tasks
+
+These are experiments to validate or invalidate our design bets:
+
+### H1: KV-Separation Reduces WAF
+- [ ] Implement "values-in-LSM" mode (feature flag)
+- [ ] Run synthetic workload varying value size
+- [ ] Measure WAF for both modes
+- [ ] Produce comparison report
+- [ ] **Expected:** WAF ≤ 3× for values ≥ 512B with KV-separation
+
+### H2: Compaction Governor Bounds Tail
+- [ ] Run sustained mixed workload at 0.7× device saturation
+- [ ] Sweep compaction budget (10%, 25%, 50%, 75%, 100%)
+- [ ] Measure p50 and p99 for each
+- [ ] Produce latency vs budget chart
+- [ ] **Expected:** Correctly tuned budget → p99 ≤ 2× p50
+
+### H3: Group Commit Latency
+- [ ] Implement configurable group commit window
+- [ ] Microbenchmark commit latency vs window size
+- [ ] Test on macOS consumer SSD
+- [ ] Produce window size vs p99 chart
+- [ ] **Expected:** 2ms window → p99 ≤ 5ms on macOS
+
+---
+
+## Priority Order
+
+### Critical Path (M0-M3)
+These must be completed in order:
+
+1. **Pre-M0**: Project setup, module skeletons
+2. **M0**: vLog, SSTable, manifest, basic DB API
+3. **M1**: Full LSM, compaction, GC, throttling
+4. **M2**: MVCC, transactions, correctness tests
+5. **M3**: Wire protocol, SQL, `psql` works
+
+### High Priority (M4)
+After M3:
+- Observability and metrics
+- SLO-aware tuning
+- Admin tooling
+
+### Optional (M5)
+If you have ZNS hardware:
+- ZNS backend for reduced WAF
+
+### Parallel Work
+Can be done alongside milestones:
+- Linux io_uring backend (after M0 macOS works)
+- Documentation
+- Performance benchmarking
+- Hypothesis validation experiments
