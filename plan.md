@@ -48,7 +48,7 @@ Traditional databases use B-trees optimized for HDDs. We'll use Log-Structured M
 ├─────────────────────────────────────────────────────────┤
 │                  Block Cache / Buffer Pool               │
 ├─────────────────────────────────────────────────────────┤
-│                  Direct I/O Layer (io_uring)            │
+│           Async I/O Layer (io_uring/kqueue)             │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -191,16 +191,37 @@ Tuple Header:
 
 ### 7. I/O Layer
 
-**Direct I/O with io_uring (Linux):**
+**Cross-Platform Async I/O:**
+
+**Linux: io_uring**
+- Modern async I/O interface (kernel 5.1+)
 - Bypass kernel page cache for data files
-- Asynchronous I/O for parallelism
+- True asynchronous I/O with submission/completion queues
 - Batch I/O operations
-- Aligned I/O to SSD page boundaries
+- Minimal system call overhead
+
+**macOS/BSD: kqueue**
+- Event notification interface
+- Async file I/O via EVFILT_READ/EVFILT_WRITE
+- Can combine with aio (POSIX async I/O) for better performance
+- Similar batching capabilities to io_uring
+
+**Fallback: POSIX AIO**
+- Cross-platform async I/O (aio_read/aio_write)
+- Available on both Linux and macOS
+- Less performant than io_uring/kqueue but widely supported
+
+**Common optimizations:**
+- Direct I/O (O_DIRECT on Linux, F_NOCACHE on macOS)
+- Aligned I/O to SSD page boundaries (4KB/8KB/16KB)
+- Batched operations to reduce syscall overhead
+- Multiple I/O threads for parallelism
 
 **Benefits:**
-- Predictable performance
+- Predictable performance across platforms
 - Exploit SSD's internal parallelism
 - Reduce CPU overhead
+- Platform-specific optimizations where available
 
 ### 8. Page Layout
 
@@ -328,12 +349,21 @@ Tuple Header:
 - Performance
 - Interop with C libraries
 - Zero-cost abstractions
+- Cross-platform support (Linux, macOS, BSD)
 
 **Key Libraries:**
-- io_uring for async I/O (Linux)
-- LZ4 or Zstandard for compression
-- xxHash for checksums
-- pg_query (C library) for SQL parsing
+- **Async I/O:**
+  - io_uring (Linux via liburing)
+  - kqueue (macOS/BSD, built-in)
+  - POSIX AIO fallback (cross-platform)
+- **Compression:** LZ4 or Zstandard
+- **Checksums:** xxHash or CRC32C
+- **SQL Parsing:** pg_query (C library) or custom parser
+
+**Platform-Specific Features:**
+- **Linux:** io_uring, O_DIRECT, fallocate
+- **macOS:** kqueue, F_NOCACHE, F_PREALLOCATE
+- **Common:** mmap, fsync, posix_fadvise/fcntl
 
 ## Risk Mitigation
 

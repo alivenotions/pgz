@@ -5,9 +5,15 @@
 ### 1.1 Project Infrastructure
 - [ ] Set up testing framework in Zig
 - [ ] Configure build system for multiple modules
+  - [ ] Cross-platform build configuration
+  - [ ] Platform-specific compilation flags
 - [ ] Add benchmark harness infrastructure
 - [ ] Set up continuous integration
+  - [ ] CI for Linux (GitHub Actions)
+  - [ ] CI for macOS (GitHub Actions)
+  - [ ] Run tests on both platforms
 - [ ] Create development documentation
+  - [ ] Platform-specific setup instructions
 
 ### 1.2 Core Data Structures
 - [ ] Implement Result type for error handling
@@ -221,25 +227,52 @@
 - [ ] Add cache size limits and enforcement
 - [ ] Write unit tests for block cache
 
-### 3.2 Direct I/O Layer
-- [ ] Research io_uring in Zig
+### 3.2 Async I/O Layer (Cross-Platform)
+- [ ] Design cross-platform I/O abstraction layer
+  - [ ] Common interface for async read/write
+  - [ ] Platform detection (comptime in Zig)
+  - [ ] Feature flags for platform-specific code
 - [ ] Implement file handle abstraction
-  - [ ] Open with O_DIRECT flag
-  - [ ] Aligned buffer allocation
+  - [ ] Platform-specific direct I/O flags (O_DIRECT/F_NOCACHE)
+  - [ ] Aligned buffer allocation (posix_memalign)
   - [ ] File metadata tracking
-- [ ] Implement async read operation
-  - [ ] Submit io_uring read request
-  - [ ] Handle completion
-  - [ ] Error handling
-- [ ] Implement async write operation
-  - [ ] Submit io_uring write request
-  - [ ] Handle completion
-  - [ ] fsync support
-- [ ] Add I/O batching
-  - [ ] Batch multiple I/Os in one submission
-  - [ ] Process completions in batch
+- [ ] **Linux Implementation (io_uring)**
+  - [ ] Research io_uring in Zig (liburing bindings or native)
+  - [ ] Initialize io_uring instance
+  - [ ] Implement async read operation
+    - [ ] Submit io_uring read request (SQE)
+    - [ ] Handle completion (CQE)
+    - [ ] Error handling
+  - [ ] Implement async write operation
+    - [ ] Submit io_uring write request
+    - [ ] Handle completion
+    - [ ] fsync support (IORING_OP_FSYNC)
+  - [ ] Add I/O batching
+    - [ ] Batch multiple I/Os in one submission
+    - [ ] Process completions in batch
+  - [ ] Tune io_uring parameters (queue depth, flags)
+- [ ] **macOS Implementation (kqueue + AIO)**
+  - [ ] Research kqueue in Zig
+  - [ ] Initialize kqueue instance
+  - [ ] Implement async read with POSIX AIO
+    - [ ] Submit aio_read request
+    - [ ] Monitor completion via kqueue (EVFILT_READ)
+    - [ ] Handle completion
+  - [ ] Implement async write with POSIX AIO
+    - [ ] Submit aio_write request
+    - [ ] Monitor completion via kqueue (EVFILT_WRITE)
+    - [ ] fsync support (aio_fsync or fcntl F_FULLFSYNC)
+  - [ ] Add I/O batching with lio_listio
+  - [ ] Handle F_NOCACHE for direct I/O semantics
+- [ ] **Fallback Implementation (POSIX AIO)**
+  - [ ] Implement using standard POSIX aio
+  - [ ] Thread pool for completion handling
+  - [ ] Basic batching support
 - [ ] Write benchmarks for I/O layer
-- [ ] Compare io_uring vs standard I/O performance
+  - [ ] Compare io_uring vs kqueue vs POSIX AIO
+  - [ ] Test on both Linux and macOS
+  - [ ] Measure throughput and latency
+  - [ ] Test with different queue depths
 
 ### 3.3 File Management
 - [ ] Implement file naming scheme
@@ -658,11 +691,19 @@
   - [ ] Write throughput
   - [ ] Read latency
   - [ ] Mixed workloads
+- [ ] **Cross-Platform Performance Testing**
+  - [ ] Run benchmarks on Linux (io_uring)
+  - [ ] Run benchmarks on macOS (kqueue)
+  - [ ] Compare performance across platforms
+  - [ ] Test on different SSD types (NVMe vs SATA)
+  - [ ] Verify consistent behavior across platforms
 - [ ] Profile hot paths
-  - [ ] CPU profiling (perf, flamegraphs)
-  - [ ] I/O profiling
-  - [ ] Memory profiling
+  - [ ] CPU profiling (perf on Linux, Instruments on macOS)
+  - [ ] I/O profiling (iostat, iotop)
+  - [ ] Memory profiling (valgrind, Instruments)
 - [ ] Optimize based on profiling results
+  - [ ] Platform-specific optimizations where beneficial
+  - [ ] Ensure consistent performance across platforms
 
 ### 10.4 Memory Optimization
 - [ ] Reduce memory allocations
@@ -737,6 +778,13 @@
 - [ ] Test concurrent transactions
 - [ ] Test recovery scenarios
 - [ ] Test upgrade paths
+- [ ] **Cross-Platform Integration Testing**
+  - [ ] Run full test suite on Linux
+  - [ ] Run full test suite on macOS
+  - [ ] Verify consistent behavior across platforms
+  - [ ] Test platform-specific I/O code paths
+  - [ ] Test direct I/O (O_DIRECT vs F_NOCACHE)
+  - [ ] Test fsync semantics (Linux vs macOS F_FULLFSYNC)
 
 ### 12.3 Postgres Compatibility Tests
 - [ ] Run subset of Postgres regression tests
@@ -768,11 +816,14 @@
 
 ### 13.3 Packaging
 - [ ] Create installation packages
-  - [ ] .deb (Debian/Ubuntu)
-  - [ ] .rpm (RedHat/CentOS)
-  - [ ] Binary tarballs
-- [ ] Add Docker image
+  - [ ] **Linux:** .deb (Debian/Ubuntu), .rpm (RedHat/CentOS)
+  - [ ] **macOS:** .pkg installer, Homebrew formula
+  - [ ] **Cross-platform:** Binary tarballs for both Linux and macOS
+- [ ] Add Docker image (Linux-based)
 - [ ] Publish to package repositories
+  - [ ] apt repository (Linux)
+  - [ ] Homebrew (macOS)
+  - [ ] Docker Hub
 
 ### 13.4 Release Management
 - [ ] Define versioning scheme (SemVer)
