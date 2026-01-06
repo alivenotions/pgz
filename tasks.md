@@ -7,27 +7,27 @@
 ## Pre-M0: Project Setup
 
 ### Development Environment
-- [ ] Initialize Zig project structure
-- [ ] Set up build.zig with module organization
-- [ ] Configure test runner
+- [x] Initialize Zig project structure
+- [x] Set up build.zig with module organization
+- [x] Configure test runner
 - [ ] Set up CI (GitHub Actions for macOS)
-- [ ] Add formatting/linting (zig fmt)
+- [x] Add formatting/linting (zig fmt)
 
 ### Module Skeleton
 Create empty files with basic structure:
-- [ ] `src/types.zig` — Constants, error types, IDs
-- [ ] `src/crc32c.zig` — Checksum placeholder
-- [ ] `src/io.zig` — I/O abstraction interface
-- [ ] `src/vlog.zig` — Value log placeholder
-- [ ] `src/sstable.zig` — SSTable placeholder
-- [ ] `src/manifest.zig` — Manifest placeholder
-- [ ] `src/lsm.zig` — LSM placeholder
-- [ ] `src/txn.zig` — Transaction placeholder
-- [ ] `src/db.zig` — High-level API placeholder
+- [x] `src/types.zig` — Constants, error types, IDs
+- [x] `src/crc32c.zig` — Checksum placeholder
+- [x] `src/io.zig` — I/O abstraction interface
+- [x] `src/vlog.zig` — Value log placeholder
+- [x] `src/sstable.zig` — SSTable placeholder
+- [x] `src/manifest.zig` — Manifest placeholder
+- [x] `src/lsm.zig` — LSM placeholder
+- [x] `src/txn.zig` — Transaction placeholder
+- [x] `src/db.zig` — High-level API placeholder
 
 ### Testing Infrastructure
-- [ ] Create test utilities (temp directories, cleanup)
-- [ ] Add assertion helpers for common checks
+- [x] Create test utilities (temp directories, cleanup)
+- [x] Add assertion helpers for common checks
 - [ ] Set up benchmark harness (timing, throughput measurement)
 - [ ] Add fault injection framework (for crash testing later)
 
@@ -38,26 +38,26 @@ Create empty files with basic structure:
 **Goal:** Crash-safe append-only storage with basic CLI.
 
 ### types.zig — Foundation Types
-- [ ] Define `PageSize = 4096` constant
-- [ ] Define `SegmentId`, `Offset`, `Length` types
-- [ ] Define `ValuePointer` struct: `{ segment: u32, offset: u64, len: u32 }`
+- [x] Define `PageSize = 4096` constant
+- [x] Define `SegmentId`, `Offset`, `Length` types
+- [x] Define `ValuePointer` struct: `{ segment: u32, offset: u64, len: u32 }`
 - [ ] Define error types: `StorageError`, `CorruptionError`, `IOError`
-- [ ] Define `Epoch` type for versioning
-- [ ] Add alignment helpers: `alignUp(n, alignment)`, `isAligned(n, alignment)`
+- [x] Define `Epoch` type for versioning
+- [x] Add alignment helpers: `alignUp(n, alignment)`, `isAligned(n, alignment)`
 
 ### crc32c.zig — Checksums
-- [ ] Implement CRC32C algorithm (Castagnoli polynomial)
+- [x] Implement CRC32C algorithm (Castagnoli polynomial)
 - [ ] Hardware acceleration check (use `@ctz` intrinsics if available)
-- [ ] Fallback software implementation
-- [ ] Add `crc32c(data: []const u8) -> u32`
+- [x] Fallback software implementation
+- [x] Add `crc32c(data: []const u8) -> u32`
 - [ ] Add `crc32cUpdate(crc: u32, data: []const u8) -> u32` for streaming
-- [ ] Write tests: known vectors, empty input, large input
+- [x] Write tests: known vectors, empty input, large input
 
 ### io.zig — Platform I/O Abstraction (macOS First)
 
 #### Common Interface
-- [ ] Define `IOOp` union: `{ read, write, fsync }`
-- [ ] Define `Completion` struct: `{ op, result, userdata }`
+- [x] Define `IOOp` union: `{ read, write, fsync }`
+- [x] Define `Completion` struct: `{ op, result, userdata }`
 - [ ] Define `AsyncIO` interface:
   ```zig
   pub const AsyncIO = struct {
