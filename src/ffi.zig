@@ -1,5 +1,5 @@
 const std = @import("std");
-const db_mod = @import("db.zig");
+const db_mod = @import("db");
 
 // C-compatible error codes
 pub const ErrorCode = enum(c_int) {

@@ -52,6 +52,11 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
+    // Create module for db.zig (used by ffi.zig and tests)
+    const db_mod = b.addModule("db", .{
+        .root_source_file = b.path("src/db.zig"),
+    });
+
     // Build shared library for FFI (Go will link against this)
     const lib = b.addSharedLibrary(.{
         .name = "pgz",
@@ -62,6 +67,9 @@ pub fn build(b: *std.Build) void {
         }),
         .version = .{ .major = 0, .minor = 1, .patch = 0 },
     });
+
+    // Add db module as import to the library
+    lib.root_module.addImport("db", db_mod);
 
     b.installArtifact(lib);
 
@@ -93,15 +101,14 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // Add db module as import to FFI tests
+    ffi_unit_tests.root_module.addImport("db", db_mod);
+
     const run_ffi_unit_tests = b.addRunArtifact(ffi_unit_tests);
 
     // Test DB layer
     const db_unit_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/db.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
+        .root_module = db_mod,
     });
 
     const run_db_unit_tests = b.addRunArtifact(db_unit_tests);
