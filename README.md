@@ -39,8 +39,11 @@ pgz/
 │   └── example/
 │       └── main.go     # Demo program showing FFI in action
 ├── build.zig           # Zig build configuration
-├── build-zig.sh        # Build Zig shared library
-├── run-example.sh      # Build and run Go FFI example
+├── justfile            # Build and run commands (recommended)
+├── build-zig.sh        # Build Zig shared library (alternative)
+├── run-example.sh      # Build and run Go FFI example (alternative)
+├── FFI-ARCHITECTURE.md # Deep dive into FFI design
+├── TESTING.md          # Testing guide
 └── plan.md             # Full implementation plan
 
 ```
@@ -50,26 +53,43 @@ pgz/
 - **Zig** 0.13.0 or later ([download](https://ziglang.org/download/))
 - **Go** 1.21 or later ([download](https://go.dev/dl/))
 - **GCC/Clang** (for cgo)
+- **just** (optional, recommended) - command runner ([install](https://github.com/casey/just#installation))
+
+Check prerequisites:
+```bash
+just check-prereqs
+```
 
 ## Quick Start
 
-### 1. Build the Zig Shared Library
+### Using `just` (Recommended)
 
 ```bash
-./build-zig.sh
+# See all available commands
+just
+
+# Build and run the FFI example
+just run-example
+
+# Run all tests (Zig tests + Go example)
+just test
+
+# Development workflow (clean + build + test)
+just dev
+
+# Quick iteration (build + run, skip clean)
+just quick
 ```
 
-This compiles the Zig code into a shared library:
-- macOS: `zig-out/lib/libpgz.dylib`
-- Linux: `zig-out/lib/libpgz.so`
-
-### 2. Run the Go FFI Example
+### Using Shell Scripts (Alternative)
 
 ```bash
+# Build Zig library
+./build-zig.sh
+
+# Run Go FFI example
 ./run-example.sh
 ```
-
-This demonstrates Go calling into Zig via FFI, performing basic database operations.
 
 ### Expected Output
 
@@ -116,9 +136,24 @@ This demonstrates:
   • Basic database operations (Put, Get, Delete)
 ```
 
+## Available Commands (just)
+
+| Command | Description |
+|---------|-------------|
+| `just` | Show all available commands |
+| `just run-example` | Build and run Go FFI example |
+| `just test` | Run all tests (Zig + Go integration) |
+| `just build` | Build Zig shared library |
+| `just clean` | Remove build artifacts |
+| `just dev` | Clean + build + test (full dev cycle) |
+| `just quick` | Build + run (skip clean, faster iteration) |
+| `just lib-info` | Show library details and exported symbols |
+| `just check-prereqs` | Verify required tools are installed |
+| `just fmt` | Format Zig code |
+
 ## Manual Build Steps
 
-If you prefer to build manually:
+If you prefer to build manually without `just`:
 
 ### Build Zig Library
 
