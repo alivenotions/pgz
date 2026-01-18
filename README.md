@@ -266,7 +266,14 @@ See [plan.md](plan.md) for the full implementation plan. High-level milestones:
 
 ## Contributing
 
-This is currently a learning/experimental project. See [plan.md](plan.md) for design decisions and architecture details.
+Contributions are welcome! Please note:
+
+- **Format Zig code** before committing: `zig fmt .` or `just fmt`
+- **Run tests** before pushing: `just test`
+- See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines
+- Read [plan.md](plan.md) for design decisions and architecture details
+
+This is currently a learning/experimental project.
 
 ## License
 
