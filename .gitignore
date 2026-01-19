@@ -1,9 +1,26 @@
-rocksdb
-.zig-cache
-zig-out
-*~
+# Zig
+.zig-cache/
+zig-out/
+
+# Go
+server/bin/
+
+# Build artifacts
+bin/
 *.o
+*.a
 *.dylib
+*.so
+
+# Editor/OS
+*~
+.DS_Store
+*.swp
+
+# Data directories
+data/
+
+# Legacy
+rocksdb/
 main
 kv
-data
