@@ -620,7 +620,11 @@ If we fail a gate, we fix before proceeding. No "we'll optimize later."
 
 ---
 
-## 12. Zig Module Map (Initial)
+## 12. Module Map
+
+The project is split into two layers connected via FFI:
+
+### Zig Storage Engine (`/src`)
 
 ```
 /src
@@ -632,13 +636,37 @@ If we fail a gate, we fix before proceeding. No "we'll optimize later."
   manifest.zig     # Superblock + manifest (atomic replace logic)
   txn.zig          # Transaction: commit log, snapshots, visibility
   lsm.zig          # LSM tree: memtable, flush, compaction scheduler
-  metrics.zig      # Histograms, WAF tracking, queue depth
-  pgwire.zig       # PostgreSQL v3 protocol server (M3)
   db.zig           # High-level API: get/put/scan/txn
+  capi.zig         # C API exports for FFI with Go
+
+/include
+  pgz.h            # C header for Go cgo bindings
 ```
+
+### Go Server (`/server`)
+
+```
+/server
+  cmd/pgz-server/  # Server entry point
+  pkg/
+    storage/       # Go bindings to Zig via cgo (DB, Txn, Iterator)
+    pgwire/        # PostgreSQL v3 protocol (M3)
+    parser/        # SQL parser (M3)
+    planner/       # Query planner (M3)
+```
+
+### FFI Interface
+
+Go calls Zig via cgo. The C API exposes:
+- `pgz_open/close` — Database lifecycle
+- `pgz_txn_begin/commit/abort` — Transactions
+- `pgz_get/put/delete` — Key-value operations
+- `pgz_scan/iter_next/iter_close` — Range scans
+- `pgz_free` — Memory management
 
 ### Suggested Implementation Order
 
+**Zig (Storage Engine):**
 1. `types.zig`, `crc32c.zig` — Pure, no dependencies
 2. `io.zig` — Foundation for all disk access
 3. `vlog.zig` — Simple append-only log
@@ -647,8 +675,13 @@ If we fail a gate, we fix before proceeding. No "we'll optimize later."
 6. `lsm.zig` — Ties it together
 7. `txn.zig` — MVCC layer
 8. `db.zig` — User-facing API
-9. `pgwire.zig` — PostgreSQL compatibility
-10. `metrics.zig` — Observability
+9. `capi.zig` — C API for Go FFI
+
+**Go (Server) — after M2:**
+10. `pkg/storage` — Go bindings (done)
+11. `pkg/pgwire` — PostgreSQL wire protocol
+12. `pkg/parser` — SQL parsing
+13. `pkg/planner` — Query planning
 
 ---
 
