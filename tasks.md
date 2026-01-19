@@ -28,8 +28,8 @@ Create empty files with basic structure:
 ### Testing Infrastructure
 - [x] Create test utilities (temp directories, cleanup)
 - [x] Add assertion helpers for common checks
-- [ ] Set up benchmark harness (timing, throughput measurement)
-- [ ] Add fault injection framework (for crash testing later)
+- [x] Set up benchmark harness (timing, throughput measurement)
+- [x] Add fault injection framework (for crash testing later)
 
 ---
 

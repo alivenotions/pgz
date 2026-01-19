@@ -59,4 +59,4 @@ No in-place updates. Crash recovery is simple: scan for last valid record.
 | lsm.zig | 🔲 Interface only | Needs MemTable/Tree impl |
 | txn.zig | 🔲 Interface only | Needs Manager impl |
 | db.zig | 🔲 Interface only | Needs full impl |
-| testing.zig | ✅ Done | TmpDir, assertions |
+| testing.zig | ✅ Done | TmpDir, Bench, FaultInjector |
