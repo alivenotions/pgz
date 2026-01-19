@@ -15,6 +15,33 @@ pub fn build(b: *std.Build) void {
     });
 
     // ==========================================================================
+    // Shared Library (for Go FFI)
+    // ==========================================================================
+
+    const shared_lib = b.addLibrary(.{
+        .linkage = .dynamic,
+        .name = "pgz",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/capi.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+
+    // Install the shared library to zig-out/lib/
+    b.installArtifact(shared_lib);
+
+    // Install the header file to zig-out/include/
+    const install_header = b.addInstallHeaderFile(b.path("include/pgz.h"), "pgz.h");
+    b.getInstallStep().dependOn(&install_header.step);
+
+    // Convenience step: `zig build lib`
+    const lib_step = b.step("lib", "Build the shared library for Go FFI");
+    lib_step.dependOn(&shared_lib.step);
+    lib_step.dependOn(&install_header.step);
+
+    // ==========================================================================
     // CLI Executable
     // ==========================================================================
 
