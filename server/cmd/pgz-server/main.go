@@ -9,7 +9,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/alivenotions/pgz/go/pkg/storage"
+	"github.com/alivenotions/pgz/server/pkg/storage"
 )
 
 func main() {
